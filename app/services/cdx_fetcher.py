@@ -79,32 +79,41 @@ async def fetch_homepage_snapshots(domain: str, progress_callback=None) -> list:
     """
     Fetch all unique snapshots of the domain HOMEPAGE only from Wayback CDX API.
     Uses collapse=digest to get only snapshots with different content.
-    Each unique digest = a different version of the homepage.
+    Retries up to 3 times with backoff on connection errors.
     """
     headers = {"User-Agent": CDX_USER_AGENT}
-    all_snapshots = []
+    params = {
+        "url": domain,
+        "output": "json",
+        "fl": "urlkey,timestamp,original,mimetype,statuscode,digest,length",
+        "filter": "statuscode:200",
+        "collapse": "digest",
+        "limit": CDX_PAGE_LIMIT,
+    }
 
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        # Fetch homepage snapshots with collapse=digest for unique content
-        params = {
-            "url": domain,
-            "output": "json",
-            "fl": "urlkey,timestamp,original,mimetype,statuscode,digest,length",
-            "filter": "statuscode:200",
-            "collapse": "digest",
-            "limit": CDX_PAGE_LIMIT,
-        }
+    # Separate connect vs read timeout: fail fast on connect (30s),
+    # allow long read (5 min) for large result sets.
+    # http2=False forces HTTP/1.1 — avoids connectivity issues on some VPS
+    # setups where HTTP/2 is blocked or causes ConnectError.
+    timeout = httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=10.0)
+    max_retries = 3
+    last_error = None
 
+    for attempt in range(1, max_retries + 1):
         if progress_callback:
-            progress_callback(
-                pages_so_far=0,
-                message=f"Fetching unique homepage snapshots for {domain}...",
-            )
+            msg = f"Fetching Wayback snapshots for {domain}..." if attempt == 1 \
+                  else f"Retry {attempt-1}/{max_retries-1}: fetching snapshots for {domain}..."
+            progress_callback(pages_so_far=0, message=msg)
 
         try:
-            logger.info(f"Fetching homepage snapshots for {domain}...")
-            resp = await client.get(CDX_BASE_URL, params=params, headers=headers)
-            resp.raise_for_status()
+            logger.info(f"CDX request for {domain} (attempt {attempt}/{max_retries})")
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                http2=False,         # HTTP/1.1 only — more compatible with VPS firewalls
+                follow_redirects=True,
+            ) as client:
+                resp = await client.get(CDX_BASE_URL, params=params, headers=headers)
+                resp.raise_for_status()
 
             text = resp.text.strip()
             if not text:
@@ -114,19 +123,18 @@ async def fetch_homepage_snapshots(domain: str, progress_callback=None) -> list:
             try:
                 data = resp.json()
             except Exception:
-                logger.warning(f"CDX returned non-JSON for {domain}: {text[:200]}")
+                logger.warning(f"CDX non-JSON for {domain}: {text[:200]}")
                 return []
 
             if not data or len(data) < 2:
                 logger.info(f"No snapshots found for {domain}")
                 return []
 
+            all_snapshots = []
             field_names = data[0]
             for row in data[1:]:
                 record = dict(zip(field_names, row))
-                record["wayback_url"] = build_wayback_url(
-                    record["timestamp"], record["original"]
-                )
+                record["wayback_url"] = build_wayback_url(record["timestamp"], record["original"])
                 all_snapshots.append(record)
 
             if progress_callback:
@@ -135,17 +143,37 @@ async def fetch_homepage_snapshots(domain: str, progress_callback=None) -> list:
                     message=f"Found {len(all_snapshots)} unique homepage snapshots",
                 )
 
-            logger.info(f"Domain {domain}: found {len(all_snapshots)} unique homepage snapshots")
+            logger.info(f"Domain {domain}: {len(all_snapshots)} unique snapshots (attempt {attempt})")
+            return all_snapshots
 
-        except httpx.TimeoutException:
-            raise Exception(f"CDX API timed out for {domain}. Try again later.")
+        except httpx.ConnectError as e:
+            last_error = e
+            logger.warning(f"CDX connect error for {domain} (attempt {attempt}): {e}")
+            if attempt < max_retries:
+                wait = attempt * 10  # 10s, 20s between retries
+                logger.info(f"Waiting {wait}s before retry...")
+                if progress_callback:
+                    progress_callback(pages_so_far=0, message=f"Connection failed, retrying in {wait}s... (attempt {attempt}/{max_retries})")
+                await asyncio.sleep(wait)
+
+        except httpx.TimeoutException as e:
+            last_error = e
+            logger.warning(f"CDX timeout for {domain} (attempt {attempt}): {e}")
+            if attempt < max_retries:
+                wait = attempt * 15
+                logger.info(f"Waiting {wait}s before retry...")
+                if progress_callback:
+                    progress_callback(pages_so_far=0, message=f"Request timed out, retrying in {wait}s... (attempt {attempt}/{max_retries})")
+                await asyncio.sleep(wait)
+
         except httpx.HTTPStatusError as e:
-            logger.error(f"CDX API HTTP {e.response.status_code} for {domain}")
+            logger.error(f"CDX HTTP {e.response.status_code} for {domain}")
             if e.response.status_code == 429:
-                raise Exception("Rate limited by CDX API. Wait a few minutes.")
+                raise Exception("Rate limited by Wayback CDX API. Wait a few minutes and try again.")
             raise Exception(f"CDX API returned HTTP {e.response.status_code}")
+
         except Exception as e:
-            logger.error(f"CDX API error for {domain}: {type(e).__name__}: {e}")
+            logger.error(f"CDX error for {domain}: {type(e).__name__}: {e}")
             raise
 
-    return all_snapshots
+    raise Exception(f"CDX API unreachable after {max_retries} attempts. Last error: {last_error}")
