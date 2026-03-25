@@ -3,7 +3,6 @@ version: '3.8'
 services:
   wayvault:
     build: .
-    container_name: wayvault-backend
     restart: always
     expose:
       - "8000"
