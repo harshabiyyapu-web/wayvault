@@ -6,7 +6,7 @@ services:
     container_name: wayvault-backend
     restart: always
     ports:
-      - "3033:8000"
+      - "8000:8000"
     volumes:
       - ./wayvault.db:/app/wayvault.db
     environment:
