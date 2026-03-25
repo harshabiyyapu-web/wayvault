@@ -40,6 +40,8 @@ class DomainResponse(BaseModel):
     live_status: Optional[str] = None
     live_status_code: Optional[int] = None
     live_final_url: Optional[str] = None
+    naman_approved: bool = False
+    harsha_approved: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -77,6 +79,11 @@ class FetchJobResponse(BaseModel):
     finished_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class ApprovalRequest(BaseModel):
+    approver: str  # "naman" or "harsha"
+    approved: bool = True
 
 
 class BulkDomainResponse(BaseModel):

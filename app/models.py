@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, UniqueConstraint, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -27,6 +27,10 @@ class Domain(Base):
     live_status = Column(String, nullable=True)       # ok | redirect | unreachable | timeout | error ...
     live_status_code = Column(Integer, nullable=True)  # HTTP status code
     live_final_url = Column(String, nullable=True)     # Final URL after redirects
+
+    # Approval fields
+    naman_approved = Column(Boolean, default=False)
+    harsha_approved = Column(Boolean, default=False)
 
     pages = relationship("Page", back_populates="domain_rel", cascade="all, delete-orphan")
     fetch_jobs = relationship("FetchJob", back_populates="domain_rel", cascade="all, delete-orphan")

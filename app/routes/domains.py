@@ -7,7 +7,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.database import get_db
 from app.models import Domain, Page, FetchJob
-from app.schemas import DomainCreateRequest, DomainResponse, BulkDomainResponse, FetchJobResponse, BulkFetchRequest
+from app.schemas import DomainCreateRequest, DomainResponse, BulkDomainResponse, FetchJobResponse, BulkFetchRequest, ApprovalRequest
 from app.worker import run_fetch_job, job_progress, enqueue_fetch
 
 router = APIRouter(prefix="/api/domains", tags=["domains"])
@@ -94,6 +94,32 @@ async def delete_domain(domain_id: str, db: AsyncSession = Depends(get_db)):
     await db.delete(domain)
     await db.commit()
     return {"detail": "Domain deleted", "domain": domain.domain}
+
+
+@router.post("/{domain_id}/approve")
+async def approve_domain(
+    domain_id: str,
+    req: ApprovalRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle approval stamp for a domain."""
+    domain = await db.get(Domain, domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="Domain not found")
+
+    if req.approver == "naman":
+        domain.naman_approved = req.approved
+    elif req.approver == "harsha":
+        domain.harsha_approved = req.approved
+    else:
+        raise HTTPException(status_code=400, detail="Invalid approver. Use 'naman' or 'harsha'")
+
+    await db.commit()
+    return {
+        "detail": f"{'Approved' if req.approved else 'Unapproved'} by {req.approver}",
+        "naman_approved": domain.naman_approved,
+        "harsha_approved": domain.harsha_approved,
+    }
 
 
 @router.post("/{domain_id}/fetch")
