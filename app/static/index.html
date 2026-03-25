@@ -349,6 +349,7 @@
       font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
       flex-shrink: 0; border: 1px solid transparent;
     }
+    .badge-new { background: var(--info-bg); color: var(--info); border-color: var(--info); }
     .badge-pending { background: var(--bg-card); color: var(--text-muted); border-color: var(--border); }
     .badge-fetching { background: var(--info-bg); color: var(--info); border-color: var(--info); animation: pulse-border 2s infinite; }
     .badge-done { background: var(--success-bg); color: var(--success); border-color: var(--success); }
@@ -764,8 +765,8 @@ async function refreshDomains() {
     renderDomains(filtered);
     updateStats(allDomains);
     allDomains.forEach(d => {
-      if ((d.status === 'fetching' || d.status === 'pending') && !pollIntervals[d.id]) {
-        startPolling(d.id, d.domain);
+      if (['fetching', 'pending'].includes(d.status) && !pollIntervals[d.id]) {
+        startPolling(d.id);
       }
     });
   } catch (e) { showToast('Failed to load domains', 'error'); }
@@ -774,7 +775,7 @@ async function refreshDomains() {
 function updateStats(domains) {
   document.getElementById('statTotal').textContent = domains.length;
   document.getElementById('statDone').textContent = domains.filter(d => d.status === 'done').length;
-  document.getElementById('statFetching').textContent = domains.filter(d => d.status === 'fetching').length;
+  document.getElementById('statFetching').textContent = domains.filter(d => ['fetching','pending'].includes(d.status)).length;
   document.getElementById('statLiveOk').textContent = domains.filter(d => d.live_status === 'ok').length;
   document.getElementById('statError').textContent = domains.filter(d => d.status === 'error').length;
 }
@@ -878,8 +879,8 @@ function renderDomains(domains) {
         <span class="badge badge-${d.status}">${d.status}</span>
         <div class="domain-actions">
           ${d.status === 'done' && d.total_pages > 0 ? `<button class="btn btn-ghost btn-sm" onclick="viewSnapshots('${d.id}', '${escAttr(d.domain)}', ${d.total_pages})">View</button>` : ''}
-          <button class="btn btn-ghost btn-sm" onclick="fetchDomain('${d.id}')" ${d.status === 'fetching' ? 'disabled' : ''}>
-            ${d.status === 'fetching' ? '<span class="loading-spinner"></span>' : ''} Fetch
+          <button class="btn btn-ghost btn-sm" onclick="fetchDomain('${d.id}')" ${['fetching','pending'].includes(d.status) ? 'disabled' : ''}>
+            ${['fetching','pending'].includes(d.status) ? '<span class="loading-spinner"></span> ' : ''}Fetch
           </button>
           <button class="btn btn-danger btn-sm" onclick="deleteDomain('${d.id}')">Del</button>
         </div>
@@ -1102,7 +1103,7 @@ async function bulkFetchSelected() {
 function selectUnfetched() {
   document.querySelectorAll('.domain-checkbox').forEach(cb => {
     const status = cb.getAttribute('data-status');
-    cb.checked = (status !== 'done' && status !== 'fetching');
+    cb.checked = (status === 'new' || status === 'error');
   });
   updateBulkActions();
 }

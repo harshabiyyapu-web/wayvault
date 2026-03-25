@@ -6,9 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.database import get_db
-from app.models import Domain, Page, FetchJob
+from app.models import Domain, FetchJob
 from app.schemas import DomainCreateRequest, DomainResponse, BulkDomainResponse, FetchJobResponse, BulkFetchRequest, ApprovalRequest
-from app.worker import run_fetch_job, job_progress, enqueue_fetch
+from app.worker import job_progress, enqueue_fetch
 
 router = APIRouter(prefix="/api/domains", tags=["domains"])
 
@@ -23,7 +23,7 @@ async def bulk_fetch(
 
     for domain_id in req.domain_ids:
         domain = await db.get(Domain, domain_id)
-        if domain and domain.status not in ("fetching", "pending", "done"):
+        if domain and domain.status not in ("fetching", "pending"):
             domain.status = "pending"
             enqueue_fetch(domain.id, domain.domain)
             queued.append(domain.id)
@@ -133,7 +133,7 @@ async def trigger_fetch(
         raise HTTPException(status_code=404, detail="Domain not found")
     
     if domain.status in ("fetching", "pending"):
-        raise HTTPException(status_code=409, detail="Fetch already in progress or queued")
+        raise HTTPException(status_code=409, detail="Fetch already in progress or queued — wait for it to finish")
 
     domain.status = "pending"
     await db.commit()

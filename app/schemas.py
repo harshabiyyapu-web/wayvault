@@ -43,6 +43,13 @@ class DomainResponse(BaseModel):
     naman_approved: bool = False
     harsha_approved: bool = False
 
+    @field_validator("naman_approved", "harsha_approved", mode="before")
+    @classmethod
+    def coerce_bool(cls, v):
+        if v is None:
+            return False
+        return bool(v)
+
     model_config = {"from_attributes": True}
 
 

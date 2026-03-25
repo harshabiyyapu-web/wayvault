@@ -18,7 +18,7 @@ class Domain(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     domain = Column(String, unique=True, nullable=False, index=True)
-    status = Column(String, default="pending")  # pending | fetching | done | error
+    status = Column(String, default="new")  # new | pending | fetching | done | error
     total_pages = Column(Integer, default=0)
     last_fetched_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utcnow)

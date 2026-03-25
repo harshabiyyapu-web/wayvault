@@ -26,21 +26,30 @@ async def lifespan(app: FastAPI):
 
     # Auto-migrate: add any missing columns to the domains table
     async with async_session() as db:
-        migrations = [
+        add_columns = [
             "ALTER TABLE domains ADD COLUMN live_status TEXT",
             "ALTER TABLE domains ADD COLUMN live_status_code INTEGER",
             "ALTER TABLE domains ADD COLUMN live_final_url TEXT",
-            "ALTER TABLE domains ADD COLUMN naman_approved BOOLEAN NOT NULL DEFAULT 0",
-            "ALTER TABLE domains ADD COLUMN harsha_approved BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE domains ADD COLUMN naman_approved BOOLEAN DEFAULT 0",
+            "ALTER TABLE domains ADD COLUMN harsha_approved BOOLEAN DEFAULT 0",
         ]
-        for stmt in migrations:
+        for stmt in add_columns:
             try:
                 await db.execute(text(stmt))
                 await db.commit()
             except Exception:
                 await db.rollback()  # column already exists — skip silently
 
-    # Reset any stalled fetch jobs on startup
+        # Patch any existing NULL values in bool columns (safe to run every time)
+        try:
+            await db.execute(text("UPDATE domains SET naman_approved = 0 WHERE naman_approved IS NULL"))
+            await db.execute(text("UPDATE domains SET harsha_approved = 0 WHERE harsha_approved IS NULL"))
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
+    # Reset stalled jobs: fetching/pending → error so they can be re-queued
+    # "new" domains (never fetched) are left untouched
     async with async_session() as db:
         await db.execute(
             update(Domain).where(Domain.status.in_(["fetching", "pending"])).values(status="error")
