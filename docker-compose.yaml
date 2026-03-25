@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  wayvault:
+    build: .
+    container_name: wayvault-backend
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./wayvault.db:/app/wayvault.db
+    environment:
+      - PYTHONUNBUFFERED=1
