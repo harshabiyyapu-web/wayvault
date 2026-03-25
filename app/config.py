@@ -10,4 +10,6 @@ CDX_PAGE_LIMIT = 100000
 CORS_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://wayback.185.187.170.104.sslip.io",
+    "http://wayback.185.187.170.104.sslip.io",
 ]
