@@ -23,14 +23,30 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    
+
+    # Auto-migrate: add any missing columns to the domains table
+    async with async_session() as db:
+        migrations = [
+            "ALTER TABLE domains ADD COLUMN live_status TEXT",
+            "ALTER TABLE domains ADD COLUMN live_status_code INTEGER",
+            "ALTER TABLE domains ADD COLUMN live_final_url TEXT",
+            "ALTER TABLE domains ADD COLUMN naman_approved BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE domains ADD COLUMN harsha_approved BOOLEAN NOT NULL DEFAULT 0",
+        ]
+        for stmt in migrations:
+            try:
+                await db.execute(text(stmt))
+                await db.commit()
+            except Exception:
+                await db.rollback()  # column already exists — skip silently
+
     # Reset any stalled fetch jobs on startup
     async with async_session() as db:
         await db.execute(
             update(Domain).where(Domain.status.in_(["fetching", "pending"])).values(status="error")
         )
         await db.commit()
-        
+
     asyncio.create_task(fetch_worker_loop())
     yield
 
