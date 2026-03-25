@@ -7,6 +7,10 @@ services:
     expose:
       - "8000"
     volumes:
-      - ./wayvault.db:/app/wayvault.db
+      - wayvault_data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/wayvault.db
+
+volumes:
+  wayvault_data:
