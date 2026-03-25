@@ -105,28 +105,35 @@ async def run_fetch_job(domain_id: str, domain_name: str):
 
         snapshots = await fetch_homepage_snapshots(domain_name, progress_callback=on_progress)
 
-        # Step 2b: Deduplicate by digest (keep the oldest snapshot for each unique content version)
+        # Step 2b: Filter out records missing required fields, then deduplicate by digest
+        valid_snapshots = []
+        for r in snapshots:
+            ts = r.get("timestamp")
+            orig = r.get("original")
+            wurl = r.get("wayback_url")
+            if ts and orig and wurl:
+                valid_snapshots.append(r)
+            else:
+                logger.warning(f"Skipping CDX record with missing fields for {domain_name}: {r}")
+
+        # Sort oldest-to-newest and deduplicate
+        valid_snapshots.sort(key=lambda x: x.get("timestamp", ""))
+        seen_digests: set = set()
         unique_snapshots = []
-        seen_digests = set()
-        
-        # Ensure ordered oldest-to-newest
-        snapshots.sort(key=lambda x: x["timestamp"])
-        
-        for record in snapshots:
+        for record in valid_snapshots:
             digest = record.get("digest")
             if not digest or digest not in seen_digests:
                 unique_snapshots.append(record)
                 if digest:
                     seen_digests.add(digest)
-                    
         snapshots = unique_snapshots
 
-        # Step 3: Save to DB
-        async with async_session() as db:
-            # Clear existing pages for this domain (re-fetch support)
-            await db.execute(delete(Page).where(Page.domain_id == domain_id))
-            await db.commit()
+        logger.info(f"{domain_name}: {len(snapshots)} valid unique snapshots to save")
 
+        # Step 3: Save to DB — single transaction so delete + inserts are atomic.
+        # Uses flush() per batch (writes to DB without committing) then one final
+        # commit. If anything fails the session auto-rolls back, preserving old data.
+        async with async_session() as db:
             job_progress[domain_id] = {
                 "job_id": job_id,
                 "status": "running",
@@ -134,39 +141,41 @@ async def run_fetch_job(domain_id: str, domain_name: str):
                 "message": f"Saving {len(snapshots)} snapshots to database...",
             }
 
-            # Bulk insert
+            # Delete old pages inside the same transaction
+            await db.execute(delete(Page).where(Page.domain_id == domain_id))
+
+            # Insert new pages in batches, flushing (not committing) between batches
             batch_size = 500
             for i in range(0, len(snapshots), batch_size):
                 batch = snapshots[i : i + batch_size]
                 for record in batch:
                     page = Page(
                         domain_id=domain_id,
-                        original_url=record.get("original", domain_name),
-                        urlkey=record.get("urlkey", ""),
-                        timestamp=record["timestamp"],
-                        wayback_url=record["wayback_url"],
+                        original_url=record.get("original") or domain_name,
+                        urlkey=record.get("urlkey") or "",
+                        timestamp=record.get("timestamp") or "",
+                        wayback_url=record.get("wayback_url") or "",
                         status_code=record.get("statuscode"),
                         mimetype=record.get("mimetype"),
                         digest=record.get("digest"),
                     )
                     db.add(page)
-                await db.commit()
+                await db.flush()  # write batch to DB, still inside transaction
 
-            # Update domain
+            # Update domain and job inside the same transaction
             domain = await db.get(Domain, domain_id)
             if domain:
                 domain.status = "done"
                 domain.total_pages = len(snapshots)
                 domain.last_fetched_at = datetime.now(timezone.utc)
-                await db.commit()
 
-            # Update fetch job
             fetch_job = await db.get(FetchJob, job_id)
             if fetch_job:
                 fetch_job.status = "done"
                 fetch_job.pages_found = len(snapshots)
                 fetch_job.finished_at = datetime.now(timezone.utc)
-                await db.commit()
+
+            await db.commit()  # single commit — everything or nothing
 
         job_progress[domain_id] = {
             "job_id": job_id,
