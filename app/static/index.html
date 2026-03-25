@@ -475,7 +475,15 @@
             <button class="btn btn-primary btn-sm" onclick="bulkFetchSelected()">Fetch Selected</button>
           </div>
         </div>
-        <div style="display:flex; gap: 0.5rem;">
+        <div style="display:flex; gap: 0.5rem; align-items:center;">
+          <select id="statusFilter" onchange="applyStatusFilter()" style="background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0.4rem 0.75rem;color:var(--text-primary);font-family:'Inter',sans-serif;font-size:0.8rem;">
+            <option value="all">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="error">Error</option>
+            <option value="done">Done</option>
+            <option value="fetching">Fetching</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="selectUnfetched()">Select Unfetched</button>
           <button class="btn btn-ghost btn-sm" id="selectAllBtn" onclick="toggleSelectAll(true)">Select All</button>
           <button class="btn btn-ghost btn-sm" onclick="refreshDomains()">↻ Refresh</button>
         </div>
@@ -544,6 +552,7 @@ let currentDomainName = null;
 let currentPage = 1;
 let currentFilters = {};
 let pollIntervals = {};
+let allDomains = [];
 
 function showToast(message, type = 'info') {
   const container = document.getElementById('toasts');
@@ -590,10 +599,12 @@ async function addDomains() {
 async function refreshDomains() {
   try {
     const resp = await api('/api/domains');
-    const domains = await resp.json();
-    renderDomains(domains);
-    updateStats(domains);
-    domains.forEach(d => {
+    allDomains = await resp.json();
+    const filterVal = document.getElementById('statusFilter').value;
+    const filtered = filterVal === 'all' ? allDomains : allDomains.filter(d => d.status === filterVal);
+    renderDomains(filtered);
+    updateStats(allDomains);
+    allDomains.forEach(d => {
       if ((d.status === 'fetching' || d.status === 'pending') && !pollIntervals[d.id]) {
         startPolling(d.id, d.domain);
       }
@@ -646,7 +657,7 @@ function renderDomains(domains) {
   list.innerHTML = domains.map(d => `
     <div class="domain-card" id="domain-${d.id}">
       <div class="domain-card-top">
-        <input type="checkbox" class="domain-checkbox" value="${d.id}" style="width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; margin-top: 0.2rem;" onchange="updateBulkActions()">
+        <input type="checkbox" class="domain-checkbox" value="${d.id}" data-status="${d.status}" style="width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; margin-top: 0.2rem;" onchange="updateBulkActions()">
         <div class="domain-info">
           <div class="domain-name-wrapper">
             <span class="domain-name">${escHtml(d.domain)}</span>
@@ -912,6 +923,21 @@ async function bulkFetchSelected() {
   } catch (e) {
     showToast(e.message, 'error');
   }
+}
+
+function selectUnfetched() {
+  const checkboxes = document.querySelectorAll('.domain-checkbox');
+  checkboxes.forEach(cb => {
+    const status = cb.getAttribute('data-status');
+    cb.checked = (status !== 'done' && status !== 'fetching');
+  });
+  updateBulkActions();
+}
+
+function applyStatusFilter() {
+  const filterVal = document.getElementById('statusFilter').value;
+  const filtered = filterVal === 'all' ? allDomains : allDomains.filter(d => d.status === filterVal);
+  renderDomains(filtered);
 }
 
 function formatTimestamp(ts) {

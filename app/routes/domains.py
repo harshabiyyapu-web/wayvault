@@ -23,7 +23,7 @@ async def bulk_fetch(
 
     for domain_id in req.domain_ids:
         domain = await db.get(Domain, domain_id)
-        if domain and domain.status not in ("fetching", "pending"):
+        if domain and domain.status not in ("fetching", "pending", "done"):
             domain.status = "pending"
             enqueue_fetch(domain.id, domain.domain)
             queued.append(domain.id)
