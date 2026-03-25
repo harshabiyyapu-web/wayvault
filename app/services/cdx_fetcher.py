@@ -75,7 +75,7 @@ async def check_domain_status(domain: str) -> dict:
     return result
 
 
-async def _try_cdx_request(url: str, params: dict, headers: dict) -> list | None:
+async def _try_cdx_request(url: str, params: dict, headers: dict):
     """
     Single CDX request attempt. Returns parsed snapshot list on success,
     None on connection/timeout failure, raises on HTTP errors.
