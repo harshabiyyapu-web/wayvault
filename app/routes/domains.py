@@ -13,6 +13,26 @@ from app.worker import run_fetch_job, job_progress, enqueue_fetch
 router = APIRouter(prefix="/api/domains", tags=["domains"])
 
 
+@router.post("/bulk-fetch")
+async def bulk_fetch(
+    req: BulkFetchRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Enqueue multiple fetch jobs safely."""
+    queued = []
+
+    for domain_id in req.domain_ids:
+        domain = await db.get(Domain, domain_id)
+        if domain and domain.status not in ("fetching", "pending"):
+            domain.status = "pending"
+            enqueue_fetch(domain.id, domain.domain)
+            queued.append(domain.id)
+
+    await db.commit()
+
+    return {"detail": f"Queued {len(queued)} domains for fetch", "queued_ids": queued}
+
+
 @router.post("", response_model=BulkDomainResponse)
 async def add_domains(req: DomainCreateRequest, db: AsyncSession = Depends(get_db)):
     """Add one or multiple domains."""
@@ -95,26 +115,6 @@ async def trigger_fetch(
     enqueue_fetch(domain.id, domain.domain)
 
     return {"detail": "Fetch job queued", "domain_id": domain.id, "domain": domain.domain}
-
-@router.post("/bulk-fetch")
-async def bulk_fetch(
-    req: BulkFetchRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """Enqueue multiple fetch jobs safely."""
-    queued = []
-    
-    for domain_id in req.domain_ids:
-        domain = await db.get(Domain, domain_id)
-        if domain and domain.status not in ("fetching", "pending"):
-            domain.status = "pending"
-            enqueue_fetch(domain.id, domain.domain)
-            queued.append(domain.id)
-            
-    await db.commit()
-
-    return {"detail": f"Queued {len(queued)} domains for fetch", "queued_ids": queued}
-
 
 @router.get("/{domain_id}/status")
 async def fetch_status_sse(domain_id: str, db: AsyncSession = Depends(get_db)):
