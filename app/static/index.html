@@ -976,7 +976,7 @@ function showDashboard() {
 }
 
 async function loadSnapshots() {
-  const params = new URLSearchParams({ page: currentPage, limit: 12 });
+  const params = new URLSearchParams({ page: currentPage, limit: 6 });
   if (currentFilters.search) params.set('search', currentFilters.search);
   if (currentFilters.dateFrom) params.set('date_from', currentFilters.dateFrom.replace(/-/g, ''));
   if (currentFilters.dateTo) params.set('date_to', currentFilters.dateTo.replace(/-/g, ''));
@@ -1003,7 +1003,7 @@ function renderSnapshots(data) {
     return `
       <div class="snapshot-card">
         <div class="snapshot-preview" onclick="openPreview('${escAttr(previewUrl)}', '${escAttr(dateStr)} — ${escAttr(p.original_url)}', '${escAttr(p.wayback_url)}')">
-          <iframe src="${escAttr(previewUrl)}" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>
+          <iframe data-src="${escAttr(previewUrl)}" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>
           <div class="snapshot-preview-overlay"><span>View Full Preview</span></div>
         </div>
         <div class="snapshot-meta">
@@ -1023,6 +1023,22 @@ function renderSnapshots(data) {
   document.getElementById('paginationInfo').textContent =
     `Showing ${(data.page - 1) * data.limit + 1}–${Math.min(data.page * data.limit, data.total)} of ${data.total.toLocaleString()} snapshots`;
   renderPagination(data.page, data.total_pages);
+
+  // Lazy-load iframes only when they scroll into view — prevents all 6
+  // from loading simultaneously which bogs down the browser
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const iframe = entry.target;
+        if (iframe.dataset.src) {
+          iframe.src = iframe.dataset.src;
+          iframe.removeAttribute('data-src');
+        }
+        observer.unobserve(iframe);
+      }
+    });
+  }, { rootMargin: '80px' });
+  document.querySelectorAll('#snapshotGrid iframe[data-src]').forEach(f => observer.observe(f));
 }
 
 function renderPagination(current, total) {
