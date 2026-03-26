@@ -52,7 +52,7 @@ async def list_pages(
     result = await db.execute(
         select(Page)
         .where(where_clause)
-        .order_by(Page.timestamp.asc())
+        .order_by(Page.timestamp.desc())
         .offset(offset)
         .limit(limit)
     )
