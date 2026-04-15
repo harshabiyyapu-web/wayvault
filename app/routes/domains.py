@@ -7,10 +7,26 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.database import get_db
 from app.models import Domain, FetchJob
-from app.schemas import DomainCreateRequest, DomainResponse, BulkDomainResponse, FetchJobResponse, BulkFetchRequest, ApprovalRequest
+from app.schemas import DomainCreateRequest, DomainResponse, BulkDomainResponse, FetchJobResponse, BulkFetchRequest, BulkDeleteRequest, ApprovalRequest
 from app.worker import job_progress, enqueue_fetch
 
 router = APIRouter(prefix="/api/domains", tags=["domains"])
+
+
+@router.post("/bulk-delete")
+async def bulk_delete(
+    req: BulkDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete multiple domains and all their pages."""
+    deleted = []
+    for domain_id in req.domain_ids:
+        domain = await db.get(Domain, domain_id)
+        if domain:
+            await db.delete(domain)
+            deleted.append(domain_id)
+    await db.commit()
+    return {"detail": f"Deleted {len(deleted)} domain(s)", "deleted_ids": deleted}
 
 
 @router.post("/bulk-fetch")
@@ -61,6 +77,11 @@ async def add_domains(req: DomainCreateRequest, db: AsyncSession = Depends(get_d
         await db.commit()
         await db.refresh(domain)
         added.append(DomainResponse.model_validate(domain))
+
+        if req.auto_fetch:
+            domain.status = "pending"
+            await db.commit()
+            enqueue_fetch(domain.id, domain.domain)
 
     return BulkDomainResponse(added=added, skipped=skipped)
 

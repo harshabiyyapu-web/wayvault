@@ -69,15 +69,13 @@ async def check_domain_status(domain: str) -> dict:
     return result
 
 
-async def fetch_homepage_snapshots(domain: str, progress_callback=None) -> list:
+async def _cdx_query(url: str, headers: dict) -> list:
     """
-    Fetch all unique homepage snapshots from the Wayback CDX API.
-    Restored to the original simple single-request structure — the complex
-    multi-URL retry logic was slower and less reliable.
+    Run a single CDX API query for a given URL and return the list of snapshot records.
+    Used internally — callers should use fetch_homepage_snapshots instead.
     """
-    headers = {"User-Agent": CDX_USER_AGENT}
     params = {
-        "url": domain,
+        "url": url,
         "output": "json",
         "fl": "urlkey,timestamp,original,mimetype,statuscode,digest,length",
         "filter": "statuscode:200",
@@ -85,16 +83,11 @@ async def fetch_homepage_snapshots(domain: str, progress_callback=None) -> list:
         "limit": CDX_PAGE_LIMIT,
     }
 
-    if progress_callback:
-        progress_callback(pages_so_far=0, message=f"Fetching Wayback snapshots for {domain}...")
-
-    logger.info(f"Fetching homepage snapshots for {domain}...")
-
     async with httpx.AsyncClient(
-        timeout=300.0,   # 5 min total — same as original, covers slow CDX responses
-        http2=False,     # HTTP/1.1 only — avoids HTTP/2 issues on some VPS setups
+        timeout=300.0,
+        http2=False,
         follow_redirects=True,
-        verify=False,    # skip SSL cert verification — avoids cert chain issues on VPS
+        verify=False,
     ) as client:
         try:
             resp = await client.get(CDX_BASE_URL, params=params, headers=headers)
@@ -102,17 +95,17 @@ async def fetch_homepage_snapshots(domain: str, progress_callback=None) -> list:
 
             raw = resp.text.strip()
             if not raw:
-                logger.info(f"No CDX results for {domain}")
+                logger.info(f"No CDX results for {url}")
                 return []
 
             try:
                 data = resp.json()
             except Exception:
-                logger.warning(f"CDX non-JSON for {domain}: {raw[:200]}")
+                logger.warning(f"CDX non-JSON for {url}: {raw[:200]}")
                 return []
 
             if not data or len(data) < 2:
-                logger.info(f"No snapshots found for {domain}")
+                logger.info(f"No snapshots found for {url}")
                 return []
 
             field_names = data[0]
@@ -125,22 +118,47 @@ async def fetch_homepage_snapshots(domain: str, progress_callback=None) -> list:
                     record["wayback_url"] = build_wayback_url(ts, orig)
                     snapshots.append(record)
 
-            if progress_callback:
-                progress_callback(
-                    pages_so_far=len(snapshots),
-                    message=f"Found {len(snapshots)} unique homepage snapshots",
-                )
-
-            logger.info(f"Domain {domain}: found {len(snapshots)} unique homepage snapshots")
             return snapshots
 
         except httpx.TimeoutException:
-            raise Exception(f"CDX API timed out for {domain}. Try again later.")
+            raise Exception(f"CDX API timed out for {url}. Try again later.")
         except httpx.HTTPStatusError as e:
-            logger.error(f"CDX API HTTP {e.response.status_code} for {domain}")
+            logger.error(f"CDX API HTTP {e.response.status_code} for {url}")
             if e.response.status_code == 429:
                 raise Exception("Rate limited by CDX API. Wait a few minutes.")
             raise Exception(f"CDX API returned HTTP {e.response.status_code}")
         except Exception as e:
-            logger.error(f"CDX API error for {domain}: {type(e).__name__}: {e}")
+            logger.error(f"CDX API error for {url}: {type(e).__name__}: {e}")
             raise
+
+
+async def fetch_homepage_snapshots(domain: str, progress_callback=None) -> list:
+    """
+    Fetch all unique homepage snapshots from the Wayback CDX API.
+    Tries the bare domain first; if that returns nothing, falls back to www.{domain}.
+    """
+    headers = {"User-Agent": CDX_USER_AGENT}
+
+    if progress_callback:
+        progress_callback(pages_so_far=0, message=f"Fetching Wayback snapshots for {domain}...")
+
+    logger.info(f"Fetching homepage snapshots for {domain}...")
+
+    snapshots = await _cdx_query(domain, headers)
+
+    # Fallback: try www. prefix if no results and domain doesn't already have www.
+    if not snapshots and not domain.startswith("www."):
+        www_domain = f"www.{domain}"
+        logger.info(f"No results for {domain}, trying {www_domain}...")
+        snapshots = await _cdx_query(www_domain, headers)
+        if snapshots:
+            logger.info(f"Found {len(snapshots)} snapshots under {www_domain}")
+
+    if progress_callback:
+        progress_callback(
+            pages_so_far=len(snapshots),
+            message=f"Found {len(snapshots)} unique homepage snapshots",
+        )
+
+    logger.info(f"Domain {domain}: found {len(snapshots)} unique homepage snapshots")
+    return snapshots

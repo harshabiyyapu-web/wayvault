@@ -94,6 +94,20 @@ async def run_fetch_job(domain_id: str, domain_name: str):
             "message": f"Live: {live_status['live_status'].upper()} (HTTP {live_status.get('status_code', '?')}). Now fetching Wayback snapshots...",
         }
 
+        # Detect if the domain redirects to a same-domain path (e.g. example.com → example.com/home)
+        # If so, we'll also query CDX for that path to catch snapshots that were only archived there.
+        redirect_url = None
+        final_url = live_status.get("final_url")
+        if final_url and live_status.get("live_status") != "redirected_away":
+            from urllib.parse import urlparse
+            parsed = urlparse(final_url)
+            final_domain = parsed.netloc.replace("www.", "")
+            if final_domain == domain_name or final_domain == f"www.{domain_name}":
+                redirect_path = parsed.path.strip("/")
+                if redirect_path and redirect_path.lower() not in ("", "index.html", "index.htm", "index.php"):
+                    redirect_url = f"{domain_name}/{redirect_path}"
+                    logger.info(f"{domain_name}: detected same-domain redirect to path /{redirect_path}, will also query CDX for {redirect_url}")
+
         # Step 2: Fetch unique homepage snapshots
         def on_progress(pages_so_far, message):
             job_progress[domain_id] = {
@@ -104,6 +118,30 @@ async def run_fetch_job(domain_id: str, domain_name: str):
             }
 
         snapshots = await fetch_homepage_snapshots(domain_name, progress_callback=on_progress)
+
+        # Step 2c: If a redirect path was detected, fetch CDX for it too and merge
+        if redirect_url:
+            job_progress[domain_id] = {
+                "job_id": job_id,
+                "status": "running",
+                "pages_found": len(snapshots),
+                "message": f"Also checking redirect path /{redirect_url.split('/', 1)[-1]} for more snapshots...",
+            }
+            try:
+                redirect_snapshots = await fetch_homepage_snapshots(redirect_url, progress_callback=None)
+                if redirect_snapshots:
+                    existing_digests = {s.get("digest") for s in snapshots if s.get("digest")}
+                    merged = 0
+                    for s in redirect_snapshots:
+                        if s.get("digest") not in existing_digests:
+                            snapshots.append(s)
+                            if s.get("digest"):
+                                existing_digests.add(s.get("digest"))
+                            merged += 1
+                    if merged:
+                        logger.info(f"{domain_name}: merged {merged} extra snapshots from redirect path {redirect_url}")
+            except Exception as e:
+                logger.warning(f"{domain_name}: redirect path CDX query failed (non-fatal): {e}")
 
         # Step 2b: Filter out records missing required fields, then deduplicate by digest
         valid_snapshots = []

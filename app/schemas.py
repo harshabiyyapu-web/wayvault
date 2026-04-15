@@ -7,6 +7,7 @@ from datetime import datetime
 
 class DomainCreateRequest(BaseModel):
     domains: list[str]
+    auto_fetch: bool = True
 
     @field_validator("domains", mode="before")
     @classmethod
@@ -17,6 +18,9 @@ class DomainCreateRequest(BaseModel):
         return [d.strip().lower() for d in v if d.strip()]
 
 class BulkFetchRequest(BaseModel):
+    domain_ids: list[str]
+
+class BulkDeleteRequest(BaseModel):
     domain_ids: list[str]
 
 
